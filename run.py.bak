@@ -1,0 +1,87 @@
+import time
+import numpy as np
+from scipy import interpolate
+from scipy import sparse
+from scipy import optimize
+import mesh
+import continuation
+
+start = time.time()
+
+H = mesh.H
+dx = H
+ch = mesh.chi
+CH = sparse.diags(ch,0)
+X = mesh.xw
+
+##Initial parameters
+mu0=0.50
+#initialize wavenumber
+k0 = 1 
+#initial shift
+phi0 = 0
+#Neumann BC on left
+gamma0 = 0
+
+##initialize profile
+#Fv is m equations with m unknowns for profile v.  mu,gamma fixed
+def Fv(v,mu,gamma):
+    """Defines finite difference approximation to the equation 
+    -(\partial_xx + 1)^2 u + \mu u - u^3 = 0 
+    with variable boundary conditions depending on gamma"""
+    Lmu = mesh.Lmew(k0,gamma,mu)
+    return Lmu*v - v**3
+#the m x m Jacobian of Fv with respect to the variable v
+def Jv(v,mu,gamma):
+    Lmu = mesh.Lmew(k0,gamma,mu)
+    return Lmu - sparse.diags(3*v**2,0)
+##Initial guess for Neumann v0 is vstar the asymptotic soln
+v0 = np.sqrt(4*mu0/3)*np.cos(X) 
+##Newton Solver for initial Profile v0
+iter = 0
+maxiter = 10
+tol = 10**-6
+while iter < maxiter:
+    v0 = v0 - sparse.linalg.spsolve(Jv(v0,mu0,gamma0),Fv(v0,mu0,gamma0))
+    z = Fv(v0,mu0,gamma0)
+    res = np.sqrt(H*np.dot(z,z))
+    print(res)
+    iter = iter + 1
+    if res < tol:
+        break
+    if iter == maxiter:
+        print('Did not reach tolerance for initialized Neumann profile after ' + str(iter) + ' iterations.  The residual is ' + str(res))
+    w0 = v0*(1-ch)
+    z0 = np.append(w0,k0)
+    z0 = np.append(z0,phi0)
+Lambda=[]
+##Have z0 for first mu save parameters
+param = np.array((mu0,k0,phi0))
+Lambda.append(param)
+#Neumann BCs left
+gamma = 0
+dgamma = 1./50
+jend = 51
+mu = mu0
+###use tangent continuation to transition to transparent BCs with small fixed arclength
+ds = .001
+z = z0
+t = np.zeros(z.size)
+t[-2]=1
+
+data_sol=[]
+
+for j in range(0,jend):
+    gamma = gamma0 + j*dgamma
+    print('gamma is ' + str(gamma) + ' mu is ' + str(mu))
+    t,z,iter = continuation.kphiSTEP(mu,gamma,ds,t,z)
+    print('Total time is ' + str(time.time() - start))
+        
+    K,PHI,SOL = continuation.kphiGETDATA(z0,mu,gamma)
+    SOL=np.array(SOL)
+    data_sol.append(SOL)   
+        
+np.save('Ldatasol'+str(jj),data_sol)
+
+
+print('Finish time is ' + str(time.time() - start))
